@@ -1,0 +1,16 @@
+# Core
+numpy
+pandas
+pyyaml
+
+# Data
+yfinance
+pyarrow
+tqdm
+
+# Machine Learning
+scikit-learn
+
+# Plotting
+matplotlib
+seaborn
