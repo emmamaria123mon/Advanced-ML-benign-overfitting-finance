@@ -3,9 +3,10 @@
 # =========================
 
 universe:
+
   name: "sp500"
   source: "wikipedia"       # we’ll scrape the current S&P500 constituents table
-  max_tickers: 500          # keep at 500 for now (fast + enough)
+  max_tickers: 20          # keep at 500 for now (fast + enough)
 
 data:
   start: "2000-01-01"
