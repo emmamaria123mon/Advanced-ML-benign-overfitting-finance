@@ -7,6 +7,8 @@ universe:
   name: "sp500"
   source: "wikipedia"       # we’ll scrape the current S&P500 constituents table
   max_tickers: 300          # keep at 500 for now (fast + enough)
+  selection_end_date: "2016-12-31"
+
 
 data:
   start: "2000-01-01"

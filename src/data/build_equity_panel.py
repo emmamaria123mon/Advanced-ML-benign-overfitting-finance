@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from py_compile import main
 import pandas as pd
 
 from src.utils.helpers import project_root, load_yaml, ensure_dir
@@ -134,24 +135,29 @@ def build_target(panel: pd.DataFrame) -> pd.DataFrame:
     return panel
 
 
-def filter_top_liquid_stocks(panel: pd.DataFrame, n_stocks: int) -> pd.DataFrame:
+def filter_top_liquid_stocks(
+    panel: pd.DataFrame,
+    n_stocks: int,
+    selection_end_date: str
+) -> pd.DataFrame:
     """
-    Keep the top n_stocks tickers by average (monthly) volume.
-    This uses ex-ante-ish liquidity proxy and avoids filtering on returns.
+    Select top n_stocks by average volume using ONLY data
+    up to selection_end_date (no lookahead bias).
     """
-    if n_stocks is None:
-        return panel
+    cutoff = pd.to_datetime(selection_end_date)
 
-    if n_stocks <= 0:
-        raise ValueError("n_stocks must be a positive integer.")
+    panel_pre = panel[panel["Date"] <= cutoff]
 
     avg_volume = (
-        panel.groupby("Ticker")["Volume"]
+        panel_pre.groupby("Ticker")["Volume"]
         .mean()
         .sort_values(ascending=False)
     )
+
     top_tickers = avg_volume.head(n_stocks).index
+
     return panel[panel["Ticker"].isin(top_tickers)].copy()
+
 
 
 # Main
@@ -159,9 +165,14 @@ def main() -> None:
     cfg = load_yaml("src/config/equities.yaml")
     root = project_root()
 
-    # Read from YAML once; default is 300
-    n_stocks = int(cfg.get("max_stocks", 300))
-
+    universe_cfg = cfg["universe"]
+    n_stocks = int(universe_cfg.get("max_tickers", 300))
+    selection_end_date = universe_cfg.get("selection_end_date")
+    if selection_end_date is None:
+        raise ValueError(
+            "Missing universe.selection_end_date in equities.yaml "
+            "(needed to avoid lookahead bias)."
+        )
     prices_dir = root / cfg["io"]["raw_prices_dir"]
     out_path = root / cfg["io"]["processed_panel_path"]
     ensure_dir(out_path.parent)
@@ -178,16 +189,38 @@ def main() -> None:
     print("Building target...")
     panel = build_target(panel)
 
-    print(f"Filtering top liquid stocks (top {n_stocks})...")
-    panel = filter_top_liquid_stocks(panel, n_stocks=n_stocks)
+    feature_cols = [
+        "ret",
+        "mom_1m",
+        "mom_3m",
+        "mom_6m",
+        "mom_12m",
+        "vol_12m",
+        "Volume",
+    ]
+    target_cols = ["y"]
 
-    panel = panel.dropna().reset_index(drop=True)
+    print(
+        f"Filtering top liquid stocks (top {n_stocks}) "
+        f"using data up to {selection_end_date}..."
+    )
+    panel = filter_top_liquid_stocks(
+        panel,
+        n_stocks=n_stocks,
+        selection_end_date=selection_end_date,
+    )
+
+    panel = (
+        panel
+        .dropna(subset=feature_cols + target_cols)
+        .reset_index(drop=True)
+    )
 
     panel.to_parquet(out_path, index=False)
     print(f"Saved panel to {out_path}")
     print("Tickers:", panel["Ticker"].nunique())
+    print("Date range:", panel["Date"].min(), "->", panel["Date"].max())
     print(panel.head())
-
 
 if __name__ == "__main__":
     main()
