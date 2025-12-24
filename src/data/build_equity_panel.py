@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from py_compile import main
+import json
 import pandas as pd
 
 from src.utils.helpers import project_root, load_yaml, ensure_dir
+import numpy as np
 
 # I/O + normalization helpers
 
@@ -108,6 +109,10 @@ def to_monthly(df: pd.DataFrame) -> pd.DataFrame:
 def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     panel = panel.sort_values(["Ticker", "Date"]).copy()
 
+    panel["log_volume"] = np.log1p(panel["Volume"])
+
+    panel["mkt_ew_ret"] = panel.groupby("Date")["ret"].transform("mean")
+
     # Momentum features: rolling mean of monthly returns
     for k in [1, 3, 6, 12]:
         panel[f"mom_{k}m"] = (
@@ -130,9 +135,21 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
 
 def build_target(panel: pd.DataFrame) -> pd.DataFrame:
     panel = panel.copy()
+    panel = panel.sort_values(["Ticker", "Date"])
+
+    # next-month return (already monthly)
     panel["ret_fwd"] = panel.groupby("Ticker")["ret"].shift(-1)
+
+    # simple direction label
     panel["y"] = (panel["ret_fwd"] > 0).astype(int)
+
+    # cross-sectional label (balanced each month)
+    panel["y_cs"] = (
+        panel["ret_fwd"] > panel.groupby("Date")["ret_fwd"].transform("median")
+    ).astype(int)
+
     return panel
+
 
 
 def filter_top_liquid_stocks(
@@ -197,8 +214,10 @@ def main() -> None:
         "mom_12m",
         "vol_12m",
         "Volume",
+        "log_volume",
+        "mkt_ew_ret",
     ]
-    target_cols = ["y"]
+    target_cols = ["y", "y_cs"]
 
     print(
         f"Filtering top liquid stocks (top {n_stocks}) "
@@ -215,6 +234,27 @@ def main() -> None:
         .dropna(subset=feature_cols + target_cols)
         .reset_index(drop=True)
     )
+    # --- Save universe tickers list ---
+    tickers = sorted(panel["Ticker"].unique())
+    tickers_path = out_path.parent / "universe_tickers.txt"
+    tickers_path.write_text("\n".join(tickers), encoding="utf-8")
+
+# --- Save dataset metadata ---
+    meta = {
+    "n_rows": int(len(panel)),
+    "n_tickers": int(panel["Ticker"].nunique()),
+    "date_min": str(panel["Date"].min()),
+    "date_max": str(panel["Date"].max()),
+    "freq": cfg.get("panel", {}).get("freq", "M"),
+    "max_tickers": int(cfg.get("universe", {}).get("max_tickers", n_stocks)),
+    "selection_end_date": cfg.get("universe", {}).get("selection_end_date"),
+    "feature_cols": feature_cols,
+    "target_cols": target_cols,
+    "class_balance": panel["y"].value_counts(normalize=True).to_dict() if "y" in panel.columns else None,
+}
+    meta_path = out_path.parent / "dataset_metadata.json"
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
 
     panel.to_parquet(out_path, index=False)
     print(f"Saved panel to {out_path}")

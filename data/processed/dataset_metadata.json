@@ -1,0 +1,28 @@
+{
+  "n_rows": 73202,
+  "n_tickers": 280,
+  "date_min": "2001-01-31 00:00:00",
+  "date_max": "2024-12-31 00:00:00",
+  "freq": "M",
+  "max_tickers": 300,
+  "selection_end_date": "2016-12-31",
+  "feature_cols": [
+    "ret",
+    "mom_1m",
+    "mom_3m",
+    "mom_6m",
+    "mom_12m",
+    "vol_12m",
+    "Volume",
+    "log_volume",
+    "mkt_ew_ret"
+  ],
+  "target_cols": [
+    "y",
+    "y_cs"
+  ],
+  "class_balance": {
+    "1": 0.5731947214556979,
+    "0": 0.42680527854430206
+  }
+}
