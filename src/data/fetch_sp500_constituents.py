@@ -22,7 +22,6 @@ def main():
     df = pd.read_csv(SP500_CSV_URL)
 
     # Standardize column name + yfinance ticker format
-    df = df.rename(columns={"Symbol": "Symbol"})
     df["Symbol"] = df["Symbol"].str.replace("-", ".", regex=False)
 
     df = df[["Symbol"]].drop_duplicates().sort_values("Symbol")

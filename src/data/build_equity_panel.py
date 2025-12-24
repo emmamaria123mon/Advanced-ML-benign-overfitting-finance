@@ -1,120 +1,118 @@
+# src/data/build_equity_panel.py
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
 
 from src.utils.helpers import project_root, load_yaml, ensure_dir
-import numpy as np
 
-# I/O + normalization helpers
 
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    yfinance can produce multi-index columns, and when saved to parquet
-    they may come back as stringified tuples like:
-        "('Adj Close', 'AAPL')" or "('Date', '')"
-    This converts them into clean flat names:
-        -> "Adj Close", "Close", "Volume", "Date", "Ticker"
+    Handle weird column names like:
+      ('Date','') , ('Adj Close','AAPL') etc
+    or strings that literally look like "('Date', '')".
     """
-    new_cols = []
+    # If MultiIndex columns (true tuples)
+    if isinstance(df.columns, pd.MultiIndex):
+        new_cols = []
+        for a, b in df.columns:
+            if a in ["Date", "Ticker"]:
+                new_cols.append(a)
+            else:
+                new_cols.append(a)  # "Adj Close", "Close", "Volume", etc.
+        df.columns = new_cols
+        return df
+
+    # If columns are strings that look like tuples
+    rename = {}
     for c in df.columns:
-        s = str(c)
+        if c == "('Date', '')":
+            rename[c] = "Date"
+        elif c == "('Ticker', '')":
+            rename[c] = "Ticker"
+        elif isinstance(c, str) and c.startswith("('Adj Close'"):
+            rename[c] = "Adj Close"
+        elif isinstance(c, str) and c.startswith("('Close'"):
+            rename[c] = "Close"
+        elif isinstance(c, str) and c.startswith("('Volume'"):
+            rename[c] = "Volume"
+    if rename:
+        df = df.rename(columns=rename)
 
-        # If it looks like a tuple string "('Adj Close', 'AAPL')"
-        if s.startswith("(") and s.endswith(")"):
-            s2 = s[1:-1]  # remove parentheses
-            parts = s2.split(",", 1)  # split only once
-            left = parts[0].strip().strip("'").strip('"')
-            new_cols.append(left)
-        else:
-            new_cols.append(s)
-
-    out = df.copy()
-    out.columns = new_cols
-    return out
+    return df
 
 
-def standardize_price_df(df: pd.DataFrame) -> pd.DataFrame:
+def load_monthly_from_price_files(prices_dir: Path) -> pd.DataFrame:
     """
-    Ensure we have columns:
-      Date, Ticker, Adj Close, Close (optional), Volume
-    regardless of whether Date came as an index or a column.
+    Memory-safe: reads each ticker parquet separately, keeps minimal cols,
+    aggregates to month-end, and concatenates ONLY monthly panels.
     """
-    out = df.copy()
+    monthly_list = []
 
-    # If Date is in the index, bring it back
-    if "Date" not in out.columns:
-        if isinstance(out.index, pd.DatetimeIndex):
-            out = out.reset_index().rename(columns={"index": "Date"})
-        elif "index" in out.columns:
-            out = out.rename(columns={"index": "Date"})
-
-    # Sometimes yfinance names it 'Datetime'
-    if "Date" not in out.columns and "Datetime" in out.columns:
-        out = out.rename(columns={"Datetime": "Date"})
-
-    return out
-
-
-def load_all_prices(prices_dir: Path) -> pd.DataFrame:
-    files = list(prices_dir.glob("*.parquet"))
+    files = sorted(prices_dir.glob("*.parquet"))
     if not files:
-        raise RuntimeError(f"No parquet files found in {prices_dir}.")
+        raise ValueError(f"No parquet files found in {prices_dir}")
 
-    dfs = []
     for fp in files:
         df = pd.read_parquet(fp)
-        df = normalize_columns(df)
-        df = standardize_price_df(df)
-        dfs.append(df)
+        if df is None or df.empty:
+            continue
 
-    out = pd.concat(dfs, ignore_index=True)
+        df = _normalize_columns(df)
 
-    # Close is not strictly needed (we use Adj Close + Volume),
-    # but keep it if present.
-    required = {"Date", "Ticker", "Adj Close", "Volume"}
-    missing = required - set(out.columns)
-    if missing:
-        raise RuntimeError(
-            f"Missing expected columns: {missing}\n"
-            f"Columns found (sample): {list(out.columns)[:30]}"
+        # Minimal required columns
+        needed = ["Date", "Ticker", "Adj Close", "Volume"]
+        missing = [c for c in needed if c not in df.columns]
+        if missing:
+            # skip weird/broken file
+            continue
+
+        df = df[needed].copy()
+        df["Date"] = pd.to_datetime(df["Date"])
+        df["Ticker"] = df["Ticker"].astype(str)
+
+        # Month-end
+        df["Date"] = df["Date"].dt.to_period("M").dt.to_timestamp("M")
+
+        # Aggregate daily -> monthly
+        m = (
+            df.groupby(["Ticker", "Date"], as_index=False)
+              .agg({"Adj Close": "last", "Volume": "mean"})
+              .sort_values(["Ticker", "Date"])
         )
 
-    return out
+        # Monthly return from Adj Close
+        m["ret"] = m.groupby("Ticker")["Adj Close"].pct_change()
+
+        monthly_list.append(m)
+
+    if not monthly_list:
+        raise ValueError("All files were empty or unusable.")
+
+    panel = pd.concat(monthly_list, ignore_index=True)
+    panel = panel.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+    return panel
 
 
-# Panel construction
 
-def to_monthly(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.sort_values(["Ticker", "Date"])
+# -----------------------
+# Feature engineering
+# -----------------------
 
-    # month-end timestamp
-    df["Month"] = df["Date"].dt.to_period("M").dt.to_timestamp("M")
-
-    monthly = (
-        df.groupby(["Ticker", "Month"])
-        .agg({"Adj Close": "last", "Volume": "sum"})
-        .reset_index()
-        .rename(columns={"Month": "Date"})
-    )
-
-    monthly["ret"] = monthly.groupby("Ticker")["Adj Close"].pct_change()
-
-    return monthly
-
-
-def build_features(panel: pd.DataFrame) -> pd.DataFrame:
+def build_features(panel: pd.DataFrame, mom_windows=(1, 3, 6, 12), vol_window=12) -> pd.DataFrame:
     panel = panel.sort_values(["Ticker", "Date"]).copy()
 
     panel["log_volume"] = np.log1p(panel["Volume"])
 
+    # Equal-weight "market" return proxy each month
     panel["mkt_ew_ret"] = panel.groupby("Date")["ret"].transform("mean")
 
     # Momentum features: rolling mean of monthly returns
-    for k in [1, 3, 6, 12]:
+    for k in mom_windows:
         panel[f"mom_{k}m"] = (
             panel.groupby("Ticker")["ret"]
             .rolling(k)
@@ -123,9 +121,9 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
         )
 
     # Volatility: rolling std of monthly returns
-    panel["vol_12m"] = (
+    panel[f"vol_{vol_window}m"] = (
         panel.groupby("Ticker")["ret"]
-        .rolling(12)
+        .rolling(vol_window)
         .std()
         .reset_index(level=0, drop=True)
     )
@@ -133,134 +131,184 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     return panel
 
 
-def build_target(panel: pd.DataFrame) -> pd.DataFrame:
-    panel = panel.copy()
-    panel = panel.sort_values(["Ticker", "Date"])
+# -----------------------
+# Target construction
+# -----------------------
 
-    # next-month return (already monthly)
+def build_target(panel: pd.DataFrame) -> pd.DataFrame:
+    panel = panel.sort_values(["Ticker", "Date"]).copy()
+
+    # Next-month forward return per ticker
     panel["ret_fwd"] = panel.groupby("Ticker")["ret"].shift(-1)
 
-    # simple direction label
+    # Unconditional label: positive next-month return
     panel["y"] = (panel["ret_fwd"] > 0).astype(int)
 
-    # cross-sectional label (balanced each month)
+    # Cross-sectional label: outperform the cross-sectional median that month
     panel["y_cs"] = (
-        panel["ret_fwd"] > panel.groupby("Date")["ret_fwd"].transform("median")
-    ).astype(int)
+        panel.groupby("Date")["ret_fwd"]
+        .transform(lambda x: (x > x.median()).astype(int))
+    )
 
     return panel
 
+
+# -----------------------
+# Universe selection (no lookahead)
+# -----------------------
+
+def enforce_min_history_pre_cutoff(
+    panel: pd.DataFrame,
+    selection_end_date: str,
+    min_months: int = 24,
+) -> pd.DataFrame:
+    cutoff = pd.to_datetime(selection_end_date)
+
+    pre = panel[panel["Date"] <= cutoff]
+    n_obs = pre.groupby("Ticker")["Date"].nunique()
+
+    eligible = n_obs[n_obs >= min_months].index
+    return panel[panel["Ticker"].isin(eligible)].copy()
 
 
 def filter_top_liquid_stocks(
     panel: pd.DataFrame,
     n_stocks: int,
-    selection_end_date: str
-) -> pd.DataFrame:
+    selection_end_date: str,
+) -> tuple[pd.DataFrame, list[str]]:
     """
-    Select top n_stocks by average volume using ONLY data
-    up to selection_end_date (no lookahead bias).
+    Select top n_stocks by average Volume using ONLY data up to selection_end_date.
+    Returns (filtered_panel, selected_tickers).
     """
     cutoff = pd.to_datetime(selection_end_date)
 
     panel_pre = panel[panel["Date"] <= cutoff]
-
     avg_volume = (
         panel_pre.groupby("Ticker")["Volume"]
         .mean()
         .sort_values(ascending=False)
     )
 
-    top_tickers = avg_volume.head(n_stocks).index
+    selected = avg_volume.head(n_stocks).index.tolist()
+    filtered = panel[panel["Ticker"].isin(selected)].copy()
+    return filtered, selected
 
-    return panel[panel["Ticker"].isin(top_tickers)].copy()
+
+# -----------------------
+# Sanity checks
+# -----------------------
+
+def print_sanity_checks(
+    panel: pd.DataFrame,
+    selection_end_date: str,
+    selected_tickers: list[str],
+) -> None:
+    cutoff = pd.to_datetime(selection_end_date)
+
+    print("\n[Sanity checks]")
+    print("Universe selection cutoff:", selection_end_date)
+
+    pre = panel[panel["Date"] <= cutoff]
+    if len(pre) > 0:
+        print("Pre-cutoff date range in filtered panel:", pre["Date"].min(), "->", pre["Date"].max())
+        print("Tickers with pre-cutoff observations (filtered):", pre["Ticker"].nunique())
+    else:
+        print("WARNING: No pre-cutoff rows in filtered panel (check dates/cutoff).")
+
+    print("Tickers selected:", len(selected_tickers))
+    print("Tickers in final panel:", panel["Ticker"].nunique())
+
+    # Coverage per month
+    per_month = panel.groupby("Date")["Ticker"].nunique()
+    print("Tickers per month — min/max:", int(per_month.min()), int(per_month.max()))
+    print(per_month.describe())
+
+    if "y" in panel.columns:
+        print("y mean (ret_fwd>0):", float(panel["y"].mean()))
+    if "y_cs" in panel.columns:
+        print("y_cs mean (ret_fwd > monthly median):", float(panel["y_cs"].mean()))
+
+    print("Final date range:", panel["Date"].min(), "->", panel["Date"].max())
+    print("Rows:", len(panel))
+    print("[End sanity checks]\n")
 
 
-
+# -----------------------
 # Main
+# -----------------------
+
 def main() -> None:
     cfg = load_yaml("src/config/equities.yaml")
     root = project_root()
 
-    universe_cfg = cfg["universe"]
-    n_stocks = int(universe_cfg.get("max_tickers", 300))
-    selection_end_date = universe_cfg.get("selection_end_date")
-    if selection_end_date is None:
-        raise ValueError(
-            "Missing universe.selection_end_date in equities.yaml "
-            "(needed to avoid lookahead bias)."
-        )
     prices_dir = root / cfg["io"]["raw_prices_dir"]
     out_path = root / cfg["io"]["processed_panel_path"]
     ensure_dir(out_path.parent)
 
-    print("Loading raw prices...")
-    df = load_all_prices(prices_dir)
+    # Config
+    n_stocks = int(cfg.get("universe", {}).get("max_tickers", 300))
+    selection_end_date = cfg.get("universe", {}).get("selection_end_date", "2016-12-31")
+    min_months = int(cfg.get("panel", {}).get("min_history_months", 24))
 
-    print("Aggregating to monthly...")
-    panel = to_monthly(df)
+    mom_windows = tuple(cfg.get("features", {}).get("mom_windows_months", [1, 3, 6, 12]))
+    vol_window = int(cfg.get("features", {}).get("vol_window_months", 12))
+
+    print("Loading raw prices + aggregating to monthly (streaming)...")
+    panel = load_monthly_from_price_files(prices_dir)
 
     print("Building features...")
-    panel = build_features(panel)
+    panel = build_features(panel, mom_windows=mom_windows, vol_window=vol_window)
 
     print("Building target...")
     panel = build_target(panel)
 
-    feature_cols = [
-        "ret",
-        "mom_1m",
-        "mom_3m",
-        "mom_6m",
-        "mom_12m",
-        "vol_12m",
-        "Volume",
-        "log_volume",
-        "mkt_ew_ret",
-    ]
-    target_cols = ["y", "y_cs"]
+    # Enforce eligibility pre-cutoff (min history)
+    print(f"Enforcing min history: {min_months} months pre-cutoff...")
+    panel = enforce_min_history_pre_cutoff(panel, selection_end_date, min_months=min_months)
 
-    print(
-        f"Filtering top liquid stocks (top {n_stocks}) "
-        f"using data up to {selection_end_date}..."
-    )
-    panel = filter_top_liquid_stocks(
-        panel,
-        n_stocks=n_stocks,
-        selection_end_date=selection_end_date,
-    )
+    # Liquidity selection pre-cutoff
+    print(f"Filtering top liquid stocks (top {n_stocks}) using data up to {selection_end_date}...")
+    panel, selected_tickers = filter_top_liquid_stocks(panel, n_stocks=n_stocks, selection_end_date=selection_end_date)
 
-    panel = (
-        panel
-        .dropna(subset=feature_cols + target_cols)
-        .reset_index(drop=True)
-    )
-    # --- Save universe tickers list ---
-    tickers = sorted(panel["Ticker"].unique())
-    tickers_path = out_path.parent / "universe_tickers.txt"
-    tickers_path.write_text("\n".join(tickers), encoding="utf-8")
+    # Drop NA only on needed columns
+    feature_cols = ["ret", "log_volume", "mkt_ew_ret"] + [f"mom_{k}m" for k in mom_windows] + [f"vol_{vol_window}m"]
+    target_cols = ["ret_fwd", "y", "y_cs"]
+    panel = panel.dropna(subset=feature_cols + target_cols).reset_index(drop=True)
 
-# --- Save dataset metadata ---
-    meta = {
-    "n_rows": int(len(panel)),
-    "n_tickers": int(panel["Ticker"].nunique()),
-    "date_min": str(panel["Date"].min()),
-    "date_max": str(panel["Date"].max()),
-    "freq": cfg.get("panel", {}).get("freq", "M"),
-    "max_tickers": int(cfg.get("universe", {}).get("max_tickers", n_stocks)),
-    "selection_end_date": cfg.get("universe", {}).get("selection_end_date"),
-    "feature_cols": feature_cols,
-    "target_cols": target_cols,
-    "class_balance": panel["y"].value_counts(normalize=True).to_dict() if "y" in panel.columns else None,
-}
-    meta_path = out_path.parent / "dataset_metadata.json"
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    # Sanity checks
+    print_sanity_checks(panel, selection_end_date, selected_tickers)
 
-
+    # Save panel
     panel.to_parquet(out_path, index=False)
     print(f"Saved panel to {out_path}")
-    print("Tickers:", panel["Ticker"].nunique())
-    print("Date range:", panel["Date"].min(), "->", panel["Date"].max())
-    print(panel.head())
+
+    # Save universe tickers
+    universe_txt = root / "data/processed/universe_tickers.txt"
+    ensure_dir(universe_txt.parent)
+    universe = sorted(panel["Ticker"].unique().tolist())
+    universe_txt.write_text("\n".join(universe), encoding="utf-8")
+
+    # Save metadata
+    meta = {
+        "n_rows": int(len(panel)),
+        "n_tickers": int(panel["Ticker"].nunique()),
+        "date_min": str(panel["Date"].min()),
+        "date_max": str(panel["Date"].max()),
+        "label_mean_y": float(panel["y"].mean()),
+        "label_mean_y_cs": float(panel["y_cs"].mean()),
+        "selection_end_date": selection_end_date,
+        "min_history_months": min_months,
+        "n_stocks_target": n_stocks,
+        "mom_windows_months": list(mom_windows),
+        "vol_window_months": vol_window,
+        "feature_cols": feature_cols,
+        "target_cols": target_cols,
+        "raw_prices_dir": str(prices_dir),
+        "processed_panel_path": str(out_path),
+    }
+    meta_path = root / "data/processed/dataset_metadata.json"
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
 
 if __name__ == "__main__":
     main()

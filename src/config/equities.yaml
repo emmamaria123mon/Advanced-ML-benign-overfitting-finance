@@ -19,6 +19,7 @@ panel:
   freq: "M"                 # monthly panel (recommended for SNR)
   target_horizon: 1         # predict next month
   target_type: "classification"   # "classification" or "regression"
+  min_history_months: 24 # months
   label:
     classification_rule: "ret_fwd > 0"   # y = 1 if next-month return positive
 

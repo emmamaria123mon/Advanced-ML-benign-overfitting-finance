@@ -1,28 +1,35 @@
 {
-  "n_rows": 73202,
-  "n_tickers": 280,
+  "n_rows": 69038,
+  "n_tickers": 300,
   "date_min": "2001-01-31 00:00:00",
-  "date_max": "2024-12-31 00:00:00",
-  "freq": "M",
-  "max_tickers": 300,
+  "date_max": "2024-11-30 00:00:00",
+  "label_mean_y": 0.5720617630869955,
+  "label_mean_y_cs": 0.49532141719053274,
   "selection_end_date": "2016-12-31",
+  "min_history_months": 24,
+  "n_stocks_target": 300,
+  "mom_windows_months": [
+    1,
+    3,
+    6,
+    12
+  ],
+  "vol_window_months": 12,
   "feature_cols": [
     "ret",
+    "log_volume",
+    "mkt_ew_ret",
     "mom_1m",
     "mom_3m",
     "mom_6m",
     "mom_12m",
-    "vol_12m",
-    "Volume",
-    "log_volume",
-    "mkt_ew_ret"
+    "vol_12m"
   ],
   "target_cols": [
+    "ret_fwd",
     "y",
     "y_cs"
   ],
-  "class_balance": {
-    "1": 0.5731947214556979,
-    "0": 0.42680527854430206
-  }
+  "raw_prices_dir": "C:\\Users\\monci\\OneDrive\\Desktop\\M2_COURSES\\ADVANCED ML\\Advanced-ML-benign-overfitting-finance\\data\\raw\\equities\\prices",
+  "processed_panel_path": "C:\\Users\\monci\\OneDrive\\Desktop\\M2_COURSES\\ADVANCED ML\\Advanced-ML-benign-overfitting-finance\\data\\processed\\equities_panel.parquet"
 }
