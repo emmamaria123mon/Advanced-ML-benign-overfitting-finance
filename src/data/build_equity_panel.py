@@ -103,15 +103,15 @@ def load_monthly_from_price_files(prices_dir: Path) -> pd.DataFrame:
 # Feature engineering
 # -----------------------
 
-def build_features(panel: pd.DataFrame, mom_windows=(1, 3, 6, 12), vol_window=12) -> pd.DataFrame:
+def build_features(panel: pd.DataFrame, mom_windows=(1, 3, 6, 12),  vol_windows=(1, 6, 12)) -> pd.DataFrame:
     panel = panel.sort_values(["Ticker", "Date"]).copy()
 
     panel["log_volume"] = np.log1p(panel["Volume"])
 
-    # Equal-weight "market" return proxy each month
+    # Equal-weight market return
     panel["mkt_ew_ret"] = panel.groupby("Date")["ret"].transform("mean")
 
-    # Momentum features: rolling mean of monthly returns
+    # Momentum: rolling mean of returns
     for k in mom_windows:
         panel[f"mom_{k}m"] = (
             panel.groupby("Ticker")["ret"]
@@ -120,13 +120,14 @@ def build_features(panel: pd.DataFrame, mom_windows=(1, 3, 6, 12), vol_window=12
             .reset_index(level=0, drop=True)
         )
 
-    # Volatility: rolling std of monthly returns
-    panel[f"vol_{vol_window}m"] = (
-        panel.groupby("Ticker")["ret"]
-        .rolling(vol_window)
-        .std()
-        .reset_index(level=0, drop=True)
-    )
+    # Volatility: rolling std of returns (MULTI-HORIZON)
+    for k in vol_windows:
+        panel[f"vol_{k}m"] = (
+            panel.groupby("Ticker")["ret"]
+            .rolling(k)
+            .std()
+            .reset_index(level=0, drop=True)
+        )
 
     return panel
 
@@ -251,13 +252,13 @@ def main() -> None:
     min_months = int(cfg.get("panel", {}).get("min_history_months", 24))
 
     mom_windows = tuple(cfg.get("features", {}).get("mom_windows_months", [1, 3, 6, 12]))
-    vol_window = int(cfg.get("features", {}).get("vol_window_months", 12))
+    vol_windows = tuple(cfg.get("features", {}).get("vol_windows_months", [1, 6, 12]))
 
     print("Loading raw prices + aggregating to monthly (streaming)...")
     panel = load_monthly_from_price_files(prices_dir)
 
     print("Building features...")
-    panel = build_features(panel, mom_windows=mom_windows, vol_window=vol_window)
+    panel = build_features(panel, mom_windows=mom_windows, vol_windows=vol_windows)
 
     print("Building target...")
     panel = build_target(panel)
@@ -271,7 +272,7 @@ def main() -> None:
     panel, selected_tickers = filter_top_liquid_stocks(panel, n_stocks=n_stocks, selection_end_date=selection_end_date)
 
     # Drop NA only on needed columns
-    feature_cols = ["ret", "log_volume", "mkt_ew_ret"] + [f"mom_{k}m" for k in mom_windows] + [f"vol_{vol_window}m"]
+    feature_cols = ["ret", "log_volume", "mkt_ew_ret"] + [f"mom_{k}m" for k in mom_windows] + [f"vol_{k}m" for k in vol_windows]
     target_cols = ["ret_fwd", "y", "y_cs"]
     panel = panel.dropna(subset=feature_cols + target_cols).reset_index(drop=True)
 
@@ -300,7 +301,7 @@ def main() -> None:
         "min_history_months": min_months,
         "n_stocks_target": n_stocks,
         "mom_windows_months": list(mom_windows),
-        "vol_window_months": vol_window,
+        "vol_windows_months": list(vol_windows),
         "feature_cols": feature_cols,
         "target_cols": target_cols,
         "raw_prices_dir": str(prices_dir),
@@ -312,3 +313,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+5
