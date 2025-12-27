@@ -1,4 +1,3 @@
-# src/data/build_equity_panel.py
 from __future__ import annotations
 
 import json
@@ -122,12 +121,16 @@ def build_features(panel: pd.DataFrame, mom_windows=(1, 3, 6, 12),  vol_windows=
 
     # Volatility: rolling std of returns (MULTI-HORIZON)
     for k in vol_windows:
-        panel[f"vol_{k}m"] = (
-            panel.groupby("Ticker")["ret"]
-            .rolling(k)
-            .std()
-            .reset_index(level=0, drop=True)
-        )
+        if k == 1:
+            # 1-month "vol": defined as absolute monthly return (a common practical proxy)
+            panel[f"vol_{k}m"] = panel["ret"].abs()
+        else:
+            panel[f"vol_{k}m"] = (
+                panel.groupby("Ticker")["ret"]
+                .rolling(k, min_periods=k)
+                .std()
+                .reset_index(level=0, drop=True)
+            )
 
     return panel
 
@@ -282,6 +285,11 @@ def main() -> None:
     # Save panel
     panel.to_parquet(out_path, index=False)
     print(f"Saved panel to {out_path}")
+
+    # Save CSV 
+    csv_path = root / "data/processed/equities_panel.csv"
+    panel.to_csv(csv_path, index=False)
+    print(f"Saved CSV panel to {csv_path}")
 
     # Save universe tickers
     universe_txt = root / "data/processed/universe_tickers.txt"

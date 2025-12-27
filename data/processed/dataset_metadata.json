@@ -14,7 +14,11 @@
     6,
     12
   ],
-  "vol_window_months": 12,
+  "vol_windows_months": [
+    1,
+    6,
+    12
+  ],
   "feature_cols": [
     "ret",
     "log_volume",
@@ -23,6 +27,8 @@
     "mom_3m",
     "mom_6m",
     "mom_12m",
+    "vol_1m",
+    "vol_6m",
     "vol_12m"
   ],
   "target_cols": [
