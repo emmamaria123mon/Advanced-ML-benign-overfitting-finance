@@ -1,7 +1,6 @@
 # Benign Overfitting and Double Descent in Overparameterized Linear Regression (Equities)
 
-This project empirically studies **benign overfitting** and the **double descent phenomenon** in overparameterized linear regression using a U.S. equities panel.
-Starting from a fixed set of real predictors, we synthetically increase model dimension by appending irrelevant random features, allowing us to sweep across the interpolation threshold and analyze test error, parameter norms, conditioning, implicit regularization (early stopping), and robustness to label noise.
+This project empirically studies **benign overfitting** and the **double descent phenomenon** in overparameterized linear regression using a U.S. equities panel. Starting from a fixed set of real predictors, we synthetically increase model dimension by appending irrelevant random features, allowing us to sweep across the interpolation threshold and analyze test error, parameter norms, conditioning, implicit regularization (early stopping), and robustness to label noise.
 
 ## Repository Structure
 
@@ -17,16 +16,13 @@ Advanced-ML-benign-overfitting-finance/
 │ ├── constituents/
 │ │ └── sp500_constituents.parquet
 │ └── prices/
-│ ├── A.parquet
-│ ├── AAPL.parquet
-│ ├── ABBV.parquet
-│ └── ... (one parquet file per ticker)
+│ ├── one parquet file per ticker
 ├── image/ # optional assets
 ├── notebooks/
-│ ├── results/ # notebook-generated outputs (if used)
-│ └── benign_overfitting_equities_SUBMISSION_v2.ipynb
+│ ├── results/ # notebook-generated outputs
+│ └── notebook_submission.ipynb
 ├── report/
-│ └── main.tex # LaTeX report
+│ └── AML_LUCIA_CRIADO_DEL_REL_EMMA_MONCIA.pdf #pdf report
 ├── results/
 │ ├── benign_overfitting_equities/
 │ ├── benign_overfitting_equities_regression/
@@ -60,14 +56,13 @@ We recommend using a virtual environment.
 
 ```bash
 python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
+# macOS/Linux:
+source venv/bin/activate
+# Windows:
+# venv\Scripts\activate
 pip install -r requirements.txt
 ---
-
 The project relies on standard scientific Python libraries
-(`numpy`, `pandas`, `scipy`, `scikit-learn`, `matplotlib`, `jupyter`).
-
----
 
 ## Running the Project
 
@@ -84,7 +79,7 @@ jupyter notebook
 2. Open and run:
 
 ```text
-notebooks/benign_overfitting_equities_SUBMISSION_v2.ipynb
+notebooks/notebook_submission.ipynb
 ```
 
 The notebook:
