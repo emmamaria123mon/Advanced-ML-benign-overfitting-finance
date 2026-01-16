@@ -1,4 +1,4 @@
-# Benign Overfitting and Double Descent in Overparameterized Linear Regression (Equities)
+# Benign Overfitting and Double Descent in Overparameterized Linear Regression (US Equities)
 
 This project empirically studies **benign overfitting** and the **double descent phenomenon** in overparameterized linear regression using a U.S. equities panel. Starting from a fixed set of real predictors, we synthetically increase model dimension by appending irrelevant random features, allowing us to sweep across the interpolation threshold and analyze test error, parameter norms, conditioning, implicit regularization (early stopping), and robustness to label noise.
 
@@ -113,12 +113,12 @@ All preprocessing and standardization steps use **training-only statistics** to 
 
 ### Rebuild the dataset from raw files
 
-This script in src/data/build_equity_panel.py converts the per-ticker **daily** parquet files into a **monthly equity panel** with a small set of standard predictors.
+This script in **src/data/build_equity_panel.py** converts the per-ticker daily parquet files into a monthly equity panel with a small set of standard predictors.
 
 * **Streaming / memory-safe build:** we iterate over tickers one-by-one, aggregate each to month-end, then concatenate, which avoids loading the full dataset in memory.
 * **Robust column handling:** `_normalize_columns` fixes occasional weird column formats from parquet/yfinance (e.g., multi-index or stringified tuples).
-* **Monthly finance convention:** we resample to **month-end** dates and compute monthly returns from **Adj Close** via `pct_change()`.
-* **Minimal feature set:** `log_volume`, equal-weight market return, momentum (1/3/6/12m rolling means), and volatility (6/12m rolling std + `vol_1m = |ret|`). We keep features simple because the goal is to study  **overparameterization geometry** , not maximize alpha.
+* **Monthly finance convention:** we resample to month-end dates and compute monthly returns from Adj Close via `pct_change()`.
+* **Minimal feature set:** `log_volume`, equal-weight market return, momentum (1/3/6/12m rolling means), and volatility (6/12m rolling std + `vol_1m = |ret|`). We keep features simple because the goal is to study  overparameterization geometry , not maximize alpha.
 * **Targets:** next-month forward return `ret_fwd` (via `shift(-1)`); binary labels (`y`, `y_cs`) are saved for extensions, but the main notebook uses the continuous regression target.
 * **No-lookahead universe:** we enforce a minimum pre-cutoff history and select the most liquid tickers using data only up to `selection_end_date`.
 * **Outputs:** saves the panel to `.parquet` and `.csv`, writes `universe_tickers.txt`, and stores `dataset_metadata.json` for reproducibility.
@@ -146,7 +146,7 @@ src/config/equities.yaml
 The LaTeX source for the written report is available at:
 
 ```text
-report/Advanced-ML-benign-overfitting-finance\report\AML_LUCIA_CRIADO_DEL_REL_EMMA_MONCIA.pdf
+Advanced-ML-benign-overfitting-finance\report\AML_LUCIA_CRIADO_DEL_REL_EMMA_MONCIA.pdf
 ```
 
 ## Authors
